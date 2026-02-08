@@ -1,14 +1,23 @@
 package org.example.ServidorSocket;
 
-import java.io.IOException;
-import java.net.ServerSocket;
+import java.io.FileInputStream;
 import java.net.Socket;
+import java.security.KeyStore;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLServerSocketFactory;
+
 public class Server {
+
+    private static final int PUERTO = 8080;
+    private static final String KEYSTORE_PATH = "server.keystore";
+    private static final String KEYSTORE_PASS = "trivia123";
 
     private static Set<HiloCliente> clientes = ConcurrentHashMap.newKeySet();
     private static List<Pregunta> preguntas = new ArrayList<>();
@@ -19,10 +28,18 @@ public class Server {
 
     public static void main(String[] args) {
         inicializarPreguntas();
+
+        if (preguntas.isEmpty()) {
+            System.out.println("[!] No se cargaron preguntas. El servidor no puede iniciar sin preguntas.");
+            return;
+        }
+
         ExecutorService pooler = Executors.newFixedThreadPool(10);
 
-        try (ServerSocket serverSocket = new ServerSocket(8080)) {
-            System.out.println("=== SERVIDOR TRIVIA INICIADO EN PUERTO 8080 ===");
+        try {
+            SSLServerSocket serverSocket = crearSSLServerSocket();
+            System.out.println("=== SERVIDOR TRIVIA SSL/TLS INICIADO EN PUERTO " + PUERTO + " ===");
+            System.out.println("Preguntas cargadas: " + preguntas.size());
             System.out.println("Comandos disponibles:");
             System.out.println("  NEXT - Enviar siguiente pregunta");
             System.out.println("  RANKING - Mostrar ranking actual");
@@ -42,45 +59,39 @@ public class Server {
 
             while (true) {
                 Socket socket = serverSocket.accept();
-                System.out.println("[+] Cliente conectado desde: " + socket.getInetAddress());
+                System.out.println("[+] Cliente SSL conectado desde: " + socket.getInetAddress());
                 HiloCliente hilo = new HiloCliente(socket);
                 clientes.add(hilo);
                 pooler.execute(hilo);
             }
 
-        } catch (IOException e) {
+        } catch (Exception e) {
+            System.err.println("[!] Error al iniciar servidor SSL: " + e.getMessage());
             e.printStackTrace();
         } finally {
             pooler.shutdown();
         }
     }
 
+    private static SSLServerSocket crearSSLServerSocket() throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("JKS");
+        try (FileInputStream fis = new FileInputStream(KEYSTORE_PATH)) {
+            keyStore.load(fis, KEYSTORE_PASS.toCharArray());
+        }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, KEYSTORE_PASS.toCharArray());
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(kmf.getKeyManagers(), null, null);
+
+        SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
+        return (SSLServerSocket) factory.createServerSocket(PUERTO);
+    }
+
     private static void inicializarPreguntas() {
-        preguntas.add(new Pregunta(
-            "¿Cual es la capital de Francia?",
-            "A) Londres", "B) Paris", "C) Madrid", "D) Berlin",
-            'B'
-        ));
-        preguntas.add(new Pregunta(
-            "¿Cuanto es 2 + 2?",
-            "A) 3", "B) 5", "C) 4", "D) 22",
-            'C'
-        ));
-        preguntas.add(new Pregunta(
-            "¿Que lenguaje estamos usando?",
-            "A) Python", "B) JavaScript", "C) C++", "D) Java",
-            'D'
-        ));
-        preguntas.add(new Pregunta(
-            "¿En que año se creo Java?",
-            "A) 1995", "B) 2000", "C) 1990", "D) 2005",
-            'A'
-        ));
-        preguntas.add(new Pregunta(
-            "¿Cual es el planeta mas grande del sistema solar?",
-            "A) Marte", "B) Saturno", "C) Jupiter", "D) Neptuno",
-            'C'
-        ));
+        System.out.println("[*] Descargando preguntas desde servidor FTP...");
+        preguntas = Conectar.descargarPreguntas();
     }
 
     private static void procesarComandoServidor(String comando) {
@@ -226,4 +237,3 @@ public class Server {
         return preguntaActiva;
     }
 }
-

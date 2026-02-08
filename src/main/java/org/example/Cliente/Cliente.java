@@ -1,18 +1,26 @@
 package org.example.Cliente;
 
 import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
-import java.net.Socket;
+import java.security.KeyStore;
 import java.util.Scanner;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManagerFactory;
 
 public class Cliente {
 
-    private static final String HOST = "192.168.40.146"; // Cambiar a la IP del servidor si es necesario
+    private static final String HOST = "localhost";
     private static final int PUERTO = 8080;
+    private static final String TRUSTSTORE_PATH = "client.truststore";
+    private static final String TRUSTSTORE_PASS = "trivia123";
 
-    private Socket socket;
+    private SSLSocket socket;
     private PrintWriter salida;
     private BufferedReader entrada;
     private Scanner scanner;
@@ -30,12 +38,12 @@ public class Cliente {
 
     public void iniciar() {
         try {
-            socket = new Socket(HOST, PUERTO);
+            socket = crearSSLSocket();
             entrada = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             salida = new PrintWriter(socket.getOutputStream(), true);
 
             System.out.println("╔════════════════════════════════════════╗");
-            System.out.println("║       TRIVIA GAME - CONECTADO          ║");
+            System.out.println("║    TRIVIA GAME - CONECTADO (SSL/TLS)   ║");
             System.out.println("╚════════════════════════════════════════╝");
 
             // Hilo para escuchar mensajes del servidor
@@ -65,11 +73,27 @@ public class Cliente {
                 }
             }
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println("[ERROR] No se pudo conectar al servidor: " + e.getMessage());
         } finally {
             cerrarConexion();
         }
+    }
+
+    private SSLSocket crearSSLSocket() throws Exception {
+        KeyStore trustStore = KeyStore.getInstance("JKS");
+        try (FileInputStream fis = new FileInputStream(TRUSTSTORE_PATH)) {
+            trustStore.load(fis, TRUSTSTORE_PASS.toCharArray());
+        }
+
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(trustStore);
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(null, tmf.getTrustManagers(), null);
+
+        SSLSocketFactory factory = sslContext.getSocketFactory();
+        return (SSLSocket) factory.createSocket(HOST, PUERTO);
     }
 
     private void cerrarConexion() {
