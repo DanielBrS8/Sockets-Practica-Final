@@ -22,6 +22,12 @@ public class HiloCliente implements Runnable {
             entrada = new BufferedReader(new InputStreamReader(socketCliente.getInputStream()));
             salida = new PrintWriter(socketCliente.getOutputStream(), true);
 
+            // Leer y descartar cabeceras HTTP del cliente
+            String lineaHTTP;
+            while ((lineaHTTP = entrada.readLine()) != null && !lineaHTTP.isEmpty()) {
+                // Descartamos las cabeceras HTTP (GET, Host, etc.)
+            }
+
             // Solicitar nombre del jugador
             salida.println("NOMBRE:Introduce tu nombre de jugador:");
             nombre = entrada.readLine();
