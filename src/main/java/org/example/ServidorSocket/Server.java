@@ -136,10 +136,10 @@ public class Server {
 
         // Enviar pregunta a todos los clientes
         broadcast("PREGUNTA:" + p.getTexto());
-        broadcast("OPCION_A:" + p.getOpcionA());
-        broadcast("OPCION_B:" + p.getOpcionB());
-        broadcast("OPCION_C:" + p.getOpcionC());
-        broadcast("OPCION_D:" + p.getOpcionD());
+        broadcast("OPCION_A:A) " + p.getOpcionA());
+        broadcast("OPCION_B:B) " + p.getOpcionB());
+        broadcast("OPCION_C:C) " + p.getOpcionC());
+        broadcast("OPCION_D:D) " + p.getOpcionD());
         broadcast("RESPONDE:");
 
         preguntaActual++;
