@@ -1,4 +1,4 @@
-package org.example.ServidorSocket;
+package org.example.ServidorHTTP;
 
 public class Pregunta {
     private String texto;
@@ -17,27 +17,10 @@ public class Pregunta {
         this.respuestaCorrecta = respuestaCorrecta;
     }
 
-    public String getTexto() {
-        return texto;
-    }
-
-    public String getOpcionA() {
-        return opcionA;
-    }
-
-    public String getOpcionB() {
-        return opcionB;
-    }
-
-    public String getOpcionC() {
-        return opcionC;
-    }
-
-    public String getOpcionD() {
-        return opcionD;
-    }
-
-    public char getRespuestaCorrecta() {
-        return respuestaCorrecta;
-    }
+    public String getTexto() { return texto; }
+    public String getOpcionA() { return opcionA; }
+    public String getOpcionB() { return opcionB; }
+    public String getOpcionC() { return opcionC; }
+    public String getOpcionD() { return opcionD; }
+    public char getRespuestaCorrecta() { return respuestaCorrecta; }
 }

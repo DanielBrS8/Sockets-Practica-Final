@@ -2,7 +2,7 @@ package org.example.ServidorHTTP;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import org.example.ServidorSocket.Pregunta;
+
 
 import java.io.IOException;
 import java.io.OutputStream;

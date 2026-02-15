@@ -1,84 +1,192 @@
 package org.example.Cliente;
 
-
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.Scanner;
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
 
 public class ClienteHTTP {
-    private static final String SERVER_IP = "localhost"; // Cambiar si es otra PC
-    private static final int SERVER_PORT = 8080;
+
+    private static String SERVER_URL;
+    private static final HttpClient client = HttpClient.newHttpClient();
+    private static String jugadorId = null;
 
     public static void main(String[] args) {
+        Scanner scanner = new Scanner(System.in);
 
-        // --- CONFIGURACIÓN SSL (SEGURIDAD) ---
-        // Indicamos dónde está el certificado en el que confiamos (el mismo que
-        // creaste)
-        System.setProperty("javax.net.ssl.trustStore", "client.truststore");
-        System.setProperty("javax.net.ssl.trustStorePassword", "trivia123");
+        // Pedir IP del servidor
+        System.out.print("IP del servidor (ej: 192.168.1.100): ");
+        String ip = scanner.nextLine().trim();
+        if (ip.isEmpty()) ip = "localhost";
+        SERVER_URL = "http://" + ip + ":7070";
 
-        SSLSocketFactory sslFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
-        // -------------------------------------
+        System.out.println("================================");
+        System.out.println("  TRIVIA CLIENT - " + SERVER_URL);
+        System.out.println("================================");
 
-        try (SSLSocket socket = (SSLSocket) sslFactory.createSocket(SERVER_IP, SERVER_PORT);
-                PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                Scanner scanner = new Scanner(System.in)) {
+        // Registro
+        System.out.print("Tu nombre: ");
+        String nombre = scanner.nextLine().trim();
+        if (nombre.isEmpty()) nombre = "Jugador";
 
-            // Enviar cabecera HTTP al servidor
-            out.println("GET /trivia HTTP/1.1");
-            out.println("Host: " + SERVER_IP);
-            out.println("");
+        String regBody = String.format("{\"nombre\": \"%s\"}", nombre);
+        String regResp = post("/registro", regBody);
+        if (regResp == null) {
+            System.out.println("[ERROR] No se pudo conectar al servidor");
+            scanner.close();
+            return;
+        }
+        System.out.println("[*] Servidor: " + regResp);
+        jugadorId = extraerValor(regResp, "id");
 
-            // Hilo para escuchar al servidor
-            new Thread(() -> {
-                try {
-                    String fromServer;
-                    while ((fromServer = in.readLine()) != null) {
-                        if (fromServer.startsWith("NOMBRE:")) {
-                            System.out.println(fromServer.substring(7));
-                        } else if (fromServer.startsWith("BIENVENIDO:")) {
-                            System.out.println(">>> " + fromServer.substring(11));
-                        } else if (fromServer.startsWith("INFO:")) {
-                            System.out.println("[INFO] " + fromServer.substring(5));
-                        } else if (fromServer.startsWith("PREGUNTA:")) {
-                            System.out.println("\n¿? PREGUNTA: " + fromServer.substring(9));
-                        } else if (fromServer.startsWith("OPCION_")) {
-                            char letra = fromServer.charAt(7);
-                            System.out.println("   " + letra + ") " + fromServer.substring(9));
-                        } else if (fromServer.startsWith("RANKING:")) {
-                            System.out.println(fromServer.substring(8));
-                        } else if (fromServer.startsWith("RECIBIDO:") || fromServer.startsWith("ERROR:")
-                                || fromServer.startsWith("ESPERA:")) {
-                            System.out.println(fromServer);
-                        } else {
-                            // Cualquier otro mensaje
-                            System.out.println(fromServer);
-                        }
-                    }
-                } catch (IOException e) {
-                    System.out.println("Desconectado del servidor.");
-                }
-            }).start();
+        if (jugadorId == null) {
+            System.out.println("[ERROR] No se pudo registrar");
+            scanner.close();
+            return;
+        }
+        System.out.println("[OK] Registrado con ID: " + jugadorId);
+        System.out.println();
+        System.out.println("Comandos: POLL (ver pregunta), A/B/C/D (responder), SALIR");
+        System.out.println();
 
-            // Hilo principal (ESTO NO CAMBIA)
-            while (true) {
-                if (scanner.hasNextLine()) {
-                    String userInput = scanner.nextLine();
-                    out.println(userInput);
-                    if (userInput.equalsIgnoreCase("/salir")) {
-                        break;
-                    }
-                }
+        // Bucle principal
+        while (true) {
+            System.out.print("> ");
+            String input = scanner.nextLine().trim().toUpperCase();
+
+            if ("SALIR".equals(input)) {
+                System.out.println("Adios!");
+                break;
+            } else if ("POLL".equals(input)) {
+                consultarPregunta();
+            } else if (input.length() == 1 && input.charAt(0) >= 'A' && input.charAt(0) <= 'D') {
+                enviarRespuesta(input);
+            } else {
+                System.out.println("[!] Comandos: POLL, A, B, C, D, SALIR");
             }
+        }
 
-        } catch (IOException e) {
-            System.err.println("No se pudo conectar al servidor seguro (SSL).");
-            e.printStackTrace(); // Muestra el error exacto si falla el certificado
+        scanner.close();
+    }
+
+    private static void consultarPregunta() {
+        String resp = get("/pregunta");
+        if (resp == null) {
+            System.out.println("[ERROR] No se pudo conectar");
+            return;
+        }
+
+        if (resp.contains("\"hay_pregunta\": false")) {
+            System.out.println("[*] No hay pregunta activa. Espera a que el servidor lance una (NEXT).");
+            return;
+        }
+
+        String texto = extraerValor(resp, "texto");
+        String numero = extraerValor(resp, "numero");
+        String total = extraerValor(resp, "total");
+
+        System.out.println();
+        System.out.println("=== PREGUNTA " + numero + "/" + total + " ===");
+        System.out.println(texto);
+
+        // Extraer opciones del array
+        int idx = resp.indexOf("\"opciones\"");
+        if (idx != -1) {
+            String opciones = resp.substring(idx);
+            String[] letras = {"A", "B", "C", "D"};
+            int pos = 0;
+            for (String letra : letras) {
+                int start = opciones.indexOf("\"", pos + 1);
+                if (start == -1) break;
+                // Skip if we hit a bracket or colon area
+                while (start != -1 && (opciones.charAt(start - 1) == '[' || opciones.charAt(start - 1) == ',')) {
+                    start = opciones.indexOf("\"", pos + 1);
+                    break;
+                }
+                start = opciones.indexOf("\"", pos);
+                if (start == -1) break;
+                int end = opciones.indexOf("\"", start + 1);
+                if (end == -1) break;
+                System.out.println("  " + letra + ") " + opciones.substring(start + 1, end));
+                pos = end + 1;
+            }
+        }
+        System.out.println();
+        System.out.println("Responde con A, B, C o D:");
+    }
+
+    private static void enviarRespuesta(String respuesta) {
+        if (jugadorId == null) {
+            System.out.println("[ERROR] No estas registrado");
+            return;
+        }
+
+        String body = String.format("{\"id\": \"%s\", \"respuesta\": \"%s\"}", jugadorId, respuesta);
+        String resp = post("/respuesta", body);
+
+        if (resp == null) {
+            System.out.println("[ERROR] No se pudo conectar");
+            return;
+        }
+
+        if (resp.contains("\"correcta\": true")) {
+            String tiempo = extraerValor(resp, "tiempo");
+            System.out.println("[CORRECTO] Tiempo: " + tiempo + "ms");
+        } else if (resp.contains("\"correcta\": false")) {
+            String tiempo = extraerValor(resp, "tiempo");
+            System.out.println("[INCORRECTO] Tiempo: " + tiempo + "ms");
+        } else {
+            System.out.println("[*] " + resp);
+        }
+    }
+
+    private static String get(String path) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(SERVER_URL + path))
+                    .GET()
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            return response.body();
+        } catch (IOException | InterruptedException e) {
+            return null;
+        }
+    }
+
+    private static String post(String path, String body) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(SERVER_URL + path))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            return response.body();
+        } catch (IOException | InterruptedException e) {
+            return null;
+        }
+    }
+
+    private static String extraerValor(String json, String clave) {
+        // Handle numeric values
+        int idx = json.indexOf("\"" + clave + "\"");
+        if (idx == -1) return null;
+        idx = json.indexOf(":", idx);
+        if (idx == -1) return null;
+        idx++;
+        while (idx < json.length() && json.charAt(idx) == ' ') idx++;
+        if (idx >= json.length()) return null;
+
+        if (json.charAt(idx) == '"') {
+            int fin = json.indexOf("\"", idx + 1);
+            if (fin == -1) return null;
+            return json.substring(idx + 1, fin);
+        } else {
+            int fin = idx;
+            while (fin < json.length() && json.charAt(fin) != ',' && json.charAt(fin) != '}') fin++;
+            return json.substring(idx, fin).trim();
         }
     }
 }

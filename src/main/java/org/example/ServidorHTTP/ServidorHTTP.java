@@ -1,7 +1,7 @@
 package org.example.ServidorHTTP;
 
 import com.sun.net.httpserver.HttpServer;
-import org.example.ServidorSocket.Pregunta;
+
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -11,7 +11,7 @@ import java.util.concurrent.Executors;
 
 public class ServidorHTTP {
 
-    private static final int PUERTO = 8080;
+    private static final int PUERTO = 7070;
 
     // Jugadores: id -> nombre
     private static Map<String, String> jugadores = new ConcurrentHashMap<>();
