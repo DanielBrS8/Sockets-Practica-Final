@@ -4,10 +4,12 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import javax.net.ssl.*;;
 
 public class ServidorHTTP {
 
@@ -24,15 +26,29 @@ public class ServidorHTTP {
     // Respuestas: jugadorId -> RespuestaDTO
     private static Map<String, RespuestaDTO> respuestas = new ConcurrentHashMap<>();
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
         inicializarPreguntas();
 
-        ServerSocket serverSocket = new ServerSocket(PUERTO);
+        // Cargar keystore con el certificado TLS
+        KeyStore ks = KeyStore.getInstance("PKCS12");
+        try (InputStream ksStream = ServidorHTTP.class.getResourceAsStream("/keystore.p12")) {
+            ks.load(ksStream, "trivia123".toCharArray());
+        }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, "trivia123".toCharArray());
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(kmf.getKeyManagers(), null, null);
+
+        SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
+        ServerSocket serverSocket = factory.createServerSocket(PUERTO);
+
         ExecutorService pool = Executors.newFixedThreadPool(10);
 
         System.out.println("=================================");
         System.out.println("  SERVIDOR TRIVIA - Puerto " + PUERTO);
-        System.out.println("  (Sockets con HTTP manual)");
+        System.out.println("  (TLS + HTTP manual)");
         System.out.println("=================================");
         System.out.println("Comandos: NEXT, RESET");
 

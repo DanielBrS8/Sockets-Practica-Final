@@ -3,15 +3,31 @@ package org.example.Cliente;
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.util.Scanner;
+import javax.net.ssl.*;
 
 public class ClienteHTTP {
 
     private static String serverHost;
     private static int serverPort = 7070;
     private static String jugadorId = null;
+    private static SSLSocketFactory sslFactory;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
+        // Cargar truststore con el certificado del servidor
+        KeyStore ts = KeyStore.getInstance("PKCS12");
+        try (InputStream tsStream = ClienteHTTP.class.getResourceAsStream("/truststore.p12")) {
+            ts.load(tsStream, "trivia123".toCharArray());
+        }
+
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(ts);
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(null, tmf.getTrustManagers(), null);
+        sslFactory = sslContext.getSocketFactory();
+
         Scanner scanner = new Scanner(System.in);
 
         // Pedir IP del servidor
@@ -145,7 +161,7 @@ public class ClienteHTTP {
     // ==========================================
 
     private static String get(String path) {
-        try (Socket socket = new Socket(serverHost, serverPort)) {
+        try (Socket socket = sslFactory.createSocket(serverHost, serverPort)) {
             OutputStream out = socket.getOutputStream();
 
             // Construir peticion HTTP GET manualmente
@@ -164,7 +180,7 @@ public class ClienteHTTP {
     }
 
     private static String post(String path, String body) {
-        try (Socket socket = new Socket(serverHost, serverPort)) {
+        try (Socket socket = sslFactory.createSocket(serverHost, serverPort)) {
             OutputStream out = socket.getOutputStream();
             byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
 
