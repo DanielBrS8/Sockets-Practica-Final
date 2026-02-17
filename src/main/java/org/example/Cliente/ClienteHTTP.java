@@ -1,16 +1,14 @@
 package org.example.Cliente;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.io.*;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
 public class ClienteHTTP {
 
-    private static String SERVER_URL;
-    private static final HttpClient client = HttpClient.newHttpClient();
+    private static String serverHost;
+    private static int serverPort = 7070;
     private static String jugadorId = null;
 
     public static void main(String[] args) {
@@ -20,10 +18,11 @@ public class ClienteHTTP {
         System.out.print("IP del servidor (ej: 192.168.1.100): ");
         String ip = scanner.nextLine().trim();
         if (ip.isEmpty()) ip = "localhost";
-        SERVER_URL = "http://" + ip + ":7070";
+        serverHost = ip;
 
         System.out.println("================================");
-        System.out.println("  TRIVIA CLIENT - " + SERVER_URL);
+        System.out.println("  TRIVIA CLIENT - " + serverHost + ":" + serverPort);
+        System.out.println("  (Sockets con HTTP manual)");
         System.out.println("================================");
 
         // Registro
@@ -100,7 +99,6 @@ public class ClienteHTTP {
             for (String letra : letras) {
                 int start = opciones.indexOf("\"", pos + 1);
                 if (start == -1) break;
-                // Skip if we hit a bracket or colon area
                 while (start != -1 && (opciones.charAt(start - 1) == '[' || opciones.charAt(start - 1) == ',')) {
                     start = opciones.indexOf("\"", pos + 1);
                     break;
@@ -142,35 +140,93 @@ public class ClienteHTTP {
         }
     }
 
+    // ==========================================
+    // HTTP sobre Sockets raw
+    // ==========================================
+
     private static String get(String path) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(SERVER_URL + path))
-                    .GET()
-                    .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.body();
-        } catch (IOException | InterruptedException e) {
+        try (Socket socket = new Socket(serverHost, serverPort)) {
+            OutputStream out = socket.getOutputStream();
+
+            // Construir peticion HTTP GET manualmente
+            String request = "GET " + path + " HTTP/1.1\r\n"
+                    + "Host: " + serverHost + ":" + serverPort + "\r\n"
+                    + "Connection: close\r\n"
+                    + "\r\n";
+
+            out.write(request.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+
+            return leerRespuestaHTTP(socket);
+        } catch (IOException e) {
             return null;
         }
     }
 
     private static String post(String path, String body) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(SERVER_URL + path))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.body();
-        } catch (IOException | InterruptedException e) {
+        try (Socket socket = new Socket(serverHost, serverPort)) {
+            OutputStream out = socket.getOutputStream();
+            byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+
+            // Construir peticion HTTP POST manualmente
+            String request = "POST " + path + " HTTP/1.1\r\n"
+                    + "Host: " + serverHost + ":" + serverPort + "\r\n"
+                    + "Content-Type: application/json\r\n"
+                    + "Content-Length: " + bodyBytes.length + "\r\n"
+                    + "Connection: close\r\n"
+                    + "\r\n";
+
+            out.write(request.getBytes(StandardCharsets.UTF_8));
+            out.write(bodyBytes);
+            out.flush();
+
+            return leerRespuestaHTTP(socket);
+        } catch (IOException e) {
             return null;
         }
     }
 
+    /**
+     * Lee la respuesta HTTP del socket y devuelve solo el body
+     */
+    private static String leerRespuestaHTTP(Socket socket) throws IOException {
+        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+
+        // Leer linea de estado (ej: "HTTP/1.1 200 OK")
+        String statusLine = in.readLine();
+        if (statusLine == null) return null;
+
+        // Leer cabeceras
+        int contentLength = -1;
+        String linea;
+        while ((linea = in.readLine()) != null && !linea.isEmpty()) {
+            if (linea.toLowerCase().startsWith("content-length:")) {
+                contentLength = Integer.parseInt(linea.substring(15).trim());
+            }
+        }
+
+        // Leer body
+        if (contentLength > 0) {
+            char[] buffer = new char[contentLength];
+            int leidos = 0;
+            while (leidos < contentLength) {
+                int r = in.read(buffer, leidos, contentLength - leidos);
+                if (r == -1) break;
+                leidos += r;
+            }
+            return new String(buffer, 0, leidos);
+        } else {
+            // Leer hasta EOF si no hay Content-Length
+            StringBuilder sb = new StringBuilder();
+            int c;
+            while ((c = in.read()) != -1) {
+                sb.append((char) c);
+            }
+            return sb.length() > 0 ? sb.toString() : null;
+        }
+    }
+
     private static String extraerValor(String json, String clave) {
-        // Handle numeric values
         int idx = json.indexOf("\"" + clave + "\"");
         if (idx == -1) return null;
         idx = json.indexOf(":", idx);
