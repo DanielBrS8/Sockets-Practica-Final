@@ -1,26 +1,20 @@
 package org.example.ServidorHTTP;
 
 public class Pregunta {
-    private String texto;
-    private String opcionA;
-    private String opcionB;
-    private String opcionC;
-    private String opcionD;
-    private char respuestaCorrecta;
+    private String question;
+    private String[] choices;
+    private int correctIndex;
+    private int timeLimitSeconds;
 
-    public Pregunta(String texto, String opcionA, String opcionB, String opcionC, String opcionD, char respuestaCorrecta) {
-        this.texto = texto;
-        this.opcionA = opcionA;
-        this.opcionB = opcionB;
-        this.opcionC = opcionC;
-        this.opcionD = opcionD;
-        this.respuestaCorrecta = respuestaCorrecta;
+    public Pregunta(String question, String[] choices, int correctIndex, int timeLimitSeconds) {
+        this.question = question;
+        this.choices = choices;
+        this.correctIndex = correctIndex;
+        this.timeLimitSeconds = timeLimitSeconds;
     }
 
-    public String getTexto() { return texto; }
-    public String getOpcionA() { return opcionA; }
-    public String getOpcionB() { return opcionB; }
-    public String getOpcionC() { return opcionC; }
-    public String getOpcionD() { return opcionD; }
-    public char getRespuestaCorrecta() { return respuestaCorrecta; }
+    public String getQuestion() { return question; }
+    public String[] getChoices() { return choices; }
+    public int getCorrectIndex() { return correctIndex; }
+    public int getTimeLimitSeconds() { return timeLimitSeconds; }
 }

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./mvnw compile:*)",
+      "Bash(java -version:*)",
+      "Bash(curl:*)",
+      "Bash(javac:*)"
+    ]
+  }
+}

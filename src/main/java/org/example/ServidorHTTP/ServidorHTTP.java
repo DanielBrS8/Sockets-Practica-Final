@@ -3,16 +3,14 @@ package org.example.ServidorHTTP;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.security.KeyStore;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import javax.net.ssl.*;
 
 public class ServidorHTTP {
 
-    private static final int PUERTO = 7070;
+    private static final int PUERTO = 8080;
 
     // Preguntas del juego
     private static List<Pregunta> preguntas = new ArrayList<>();
@@ -31,26 +29,11 @@ public class ServidorHTTP {
     public static void main(String[] args) throws Exception {
         inicializarPreguntas();
 
-        // Cargar keystore con el certificado TLS
-        KeyStore ks = KeyStore.getInstance("PKCS12");
-        try (InputStream ksStream = ServidorHTTP.class.getResourceAsStream("/keystore.p12")) {
-            ks.load(ksStream, "trivia123".toCharArray());
-        }
-
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(ks, "trivia123".toCharArray());
-
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(kmf.getKeyManagers(), null, null);
-
-        SSLServerSocketFactory factory = sslContext.getServerSocketFactory();
-        ServerSocket serverSocket = factory.createServerSocket(PUERTO);
-
+        ServerSocket serverSocket = new ServerSocket(PUERTO);
         ExecutorService pool = Executors.newFixedThreadPool(10);
 
         System.out.println("=================================");
         System.out.println("  SERVIDOR TRIVIA - Puerto " + PUERTO);
-        System.out.println("  (TLS + Conexion persistente)");
         System.out.println("=================================");
         System.out.println("Comandos: NEXT, RESET, RANKING");
 
@@ -79,7 +62,8 @@ public class ServidorHTTP {
                 case "RESET":
                     preguntaActual = -1;
                     respuestas.clear();
-                    broadcast("INFO:Juego reiniciado. Esperando nueva partida...");
+                    broadcastHTTP("POST", "/api/kahoot-like/info",
+                        "{\"message\": \"Juego reiniciado. Esperando nueva partida...\"}");
                     System.out.println("[*] Reiniciado");
                     break;
                 case "RANKING":
@@ -95,37 +79,17 @@ public class ServidorHTTP {
             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
 
-            // 1. Leer handshake HTTP (POST + cabeceras hasta linea vacia)
-            String requestLine = in.readLine();
-            if (requestLine == null) return;
+            // 1. Leer peticion HTTP de join del cliente
+            String[] peticion = leerPeticionHTTP(in);
+            if (peticion == null) return;
 
-            // Leer cabeceras hasta linea vacia
-            String linea;
-            while ((linea = in.readLine()) != null && !linea.isEmpty()) {
-                // solo consumimos las cabeceras
-            }
-
-            // 2. Leer body JSON (lineas hasta cerrar llave)
-            StringBuilder jsonBody = new StringBuilder();
-            while ((linea = in.readLine()) != null) {
-                jsonBody.append(linea);
-                if (linea.trim().equals("}")) break;
-            }
-
-            // 3. Extraer nickname del JSON
-            String nickname = extraerValor(jsonBody.toString(), "nickname");
-
-            // 4. Pedir nombre (protocolo NOMBRE:)
-            out.println("NOMBRE:Introduce tu nombre");
-            String nombreRecibido = in.readLine();
-            if (nombreRecibido != null && !nombreRecibido.trim().isEmpty()) {
-                nickname = nombreRecibido.trim();
-            }
+            // 2. Extraer nickname del JSON del body
+            String nickname = extraerValor(peticion[1], "nickname");
             if (nickname == null || nickname.isEmpty()) {
                 nickname = "Jugador" + System.currentTimeMillis() % 1000;
             }
 
-            // 5. Registrar jugador
+            // 3. Registrar jugador
             jugadorId = UUID.randomUUID().toString().substring(0, 8);
             jugadores.put(jugadorId, nickname);
             puntuaciones.put(jugadorId, 0);
@@ -133,46 +97,56 @@ public class ServidorHTTP {
 
             System.out.println("[+] " + nickname + " conectado (ID: " + jugadorId + ")");
 
-            // 6. Enviar bienvenida e info
-            out.println("BIENVENIDO:Bienvenido al Trivia, " + nickname + "!");
-            out.println("INFO:Jugadores conectados: " + clientesConectados.size());
-            out.println("INFO:Esperando a que el host lance una pregunta...");
+            // 4. Enviar respuesta HTTP de bienvenida
+            enviarRespuestaHTTP(out, 200, "OK",
+                "{\"type\": \"welcome\", \"message\": \"Bienvenido al Trivia, " + nickname + "!\", " +
+                "\"players\": " + clientesConectados.size() + "}");
 
-            // Notificar a todos que se unio un jugador
-            broadcast("INFO:" + nickname + " se ha unido! (" + clientesConectados.size() + " jugadores)");
+            // Notificar a todos
+            broadcastHTTP("POST", "/api/kahoot-like/info",
+                "{\"message\": \"" + nickname + " se ha unido! (" + clientesConectados.size() + " jugadores)\"}");
 
-            // 7. Bucle de lectura: escuchar respuestas del cliente
-            String mensaje;
-            while ((mensaje = in.readLine()) != null) {
-                mensaje = mensaje.trim();
+            // 5. Bucle: leer peticiones HTTP del cliente (respuestas a preguntas)
+            while (true) {
+                String[] req = leerPeticionHTTP(in);
+                if (req == null) break; // desconectado
 
-                if (mensaje.equalsIgnoreCase("/salir")) {
-                    out.println("INFO:Hasta luego!");
+                String requestLine = req[0];
+                String body = req[1];
+
+                if (requestLine.contains("/api/kahoot-like/quit")) {
+                    enviarRespuestaHTTP(out, 200, "OK",
+                        "{\"type\": \"info\", \"message\": \"Hasta luego!\"}");
                     break;
                 }
 
-                // Procesar respuesta A/B/C/D
-                if (mensaje.length() == 1) {
-                    char resp = mensaje.toUpperCase().charAt(0);
-                    if (resp >= 'A' && resp <= 'D') {
-                        procesarRespuestaJugador(jugadorId, resp, out);
+                if (requestLine.contains("/api/kahoot-like/answer")) {
+                    String answer = extraerValor(body, "answer");
+                    if (answer != null && answer.length() == 1) {
+                        char resp = answer.toUpperCase().charAt(0);
+                        if (resp >= 'A' && resp <= 'D') {
+                            procesarRespuestaJugador(jugadorId, resp, out);
+                        } else {
+                            enviarRespuestaHTTP(out, 400, "Bad Request",
+                                "{\"error\": \"Respuesta invalida. Usa A, B, C o D\"}");
+                        }
                     } else {
-                        out.println("ERROR:Respuesta invalida. Usa A, B, C o D");
+                        enviarRespuestaHTTP(out, 400, "Bad Request",
+                            "{\"error\": \"Respuesta invalida. Usa A, B, C o D\"}");
                     }
-                } else {
-                    out.println("ERROR:Comando no reconocido. Usa A/B/C/D o /salir");
                 }
             }
 
         } catch (IOException e) {
             // Cliente desconectado
         } finally {
-            // Limpiar al desconectar
             if (jugadorId != null) {
                 String nombre = jugadores.get(jugadorId);
                 clientesConectados.remove(jugadorId);
                 System.out.println("[-] " + (nombre != null ? nombre : jugadorId) + " desconectado");
-                broadcast("INFO:" + (nombre != null ? nombre : "Un jugador") + " se ha desconectado. (" + clientesConectados.size() + " jugadores)");
+                broadcastHTTP("POST", "/api/kahoot-like/info",
+                    "{\"message\": \"" + (nombre != null ? nombre : "Un jugador") +
+                    " se ha desconectado. (" + clientesConectados.size() + " jugadores)\"}");
             }
             try {
                 socket.close();
@@ -189,16 +163,21 @@ public class ServidorHTTP {
 
         if (preguntaActual < preguntas.size()) {
             Pregunta p = preguntas.get(preguntaActual);
-            System.out.println("[PREGUNTA " + (preguntaActual + 1) + "/" + preguntas.size() + "] " + p.getTexto());
+            System.out.println("[PREGUNTA " + (preguntaActual + 1) + "/" + preguntas.size() + "] " + p.getQuestion());
 
-            broadcast("PREGUNTA:" + p.getTexto());
-            broadcast("OPCION_A:" + p.getOpcionA());
-            broadcast("OPCION_B:" + p.getOpcionB());
-            broadcast("OPCION_C:" + p.getOpcionC());
-            broadcast("OPCION_D:" + p.getOpcionD());
-            broadcast("INFO:Pregunta " + (preguntaActual + 1) + " de " + preguntas.size() + " - Responde con A, B, C o D");
+            // Enviar pregunta en formato HTTP del profesor
+            String choicesJson = "[\"" + String.join("\", \"", p.getChoices()) + "\"]";
+            String json = "{" +
+                "\"quizId\": \"" + (preguntaActual + 1) + "\", " +
+                "\"question\": \"" + p.getQuestion() + "\", " +
+                "\"choices\": " + choicesJson + ", " +
+                "\"correctIndex\": " + p.getCorrectIndex() + ", " +
+                "\"timeLimitSeconds\": " + p.getTimeLimitSeconds() +
+                "}";
+            broadcastHTTP("POST", "/api/kahoot-like/questions", json);
         } else {
-            broadcast("INFO:No hay mas preguntas! Juego terminado.");
+            broadcastHTTP("POST", "/api/kahoot-like/info",
+                "{\"message\": \"No hay mas preguntas! Juego terminado.\"}");
             enviarRanking();
             System.out.println("[!] No hay mas preguntas");
         }
@@ -208,17 +187,20 @@ public class ServidorHTTP {
         String nombre = jugadores.get(id);
 
         if (preguntaActual < 0 || preguntaActual >= preguntas.size()) {
-            out.println("ESPERA:No hay pregunta activa. Espera...");
+            enviarRespuestaHTTP(out, 200, "OK",
+                "{\"type\": \"wait\", \"message\": \"No hay pregunta activa. Espera...\"}");
             return;
         }
 
         if (respuestas.containsKey(id)) {
-            out.println("ERROR:Ya respondiste a esta pregunta");
+            enviarRespuestaHTTP(out, 400, "Bad Request",
+                "{\"error\": \"Ya respondiste a esta pregunta\"}");
             return;
         }
 
         long tiempo = System.currentTimeMillis() - tiempoInicio;
-        boolean correcta = respuesta == preguntas.get(preguntaActual).getRespuestaCorrecta();
+        // correctIndex es 0-3, respuesta A-D => A=0, B=1, C=2, D=3
+        boolean correcta = (respuesta - 'A') == preguntas.get(preguntaActual).getCorrectIndex();
 
         RespuestaDTO dto = new RespuestaDTO(nombre, respuesta, tiempo, correcta, null);
         respuestas.put(id, dto);
@@ -226,14 +208,16 @@ public class ServidorHTTP {
         if (correcta) {
             int puntos = Math.max(100, 1000 - (int)(tiempo / 10));
             puntuaciones.merge(id, puntos, Integer::sum);
-            out.println("RECIBIDO:Correcto! +" + puntos + " puntos (" + tiempo + "ms)");
+            enviarRespuestaHTTP(out, 200, "OK",
+                "{\"type\": \"result\", \"correct\": true, \"points\": " + puntos + ", \"timeMs\": " + tiempo + "}");
         } else {
-            out.println("RECIBIDO:Incorrecto. La respuesta era " + preguntas.get(preguntaActual).getRespuestaCorrecta() + " (" + tiempo + "ms)");
+            char correctaLetra = (char) ('A' + preguntas.get(preguntaActual).getCorrectIndex());
+            enviarRespuestaHTTP(out, 200, "OK",
+                "{\"type\": \"result\", \"correct\": false, \"correctAnswer\": \"" + correctaLetra + "\", \"timeMs\": " + tiempo + "}");
         }
 
         System.out.println("[R] " + nombre + " -> " + respuesta + " (" + tiempo + "ms) " + (correcta ? "OK" : "X"));
 
-        // Si todos respondieron, mostrar ranking automaticamente
         if (respuestas.size() == clientesConectados.size()) {
             System.out.println("[*] Todos respondieron");
             enviarRanking();
@@ -241,36 +225,87 @@ public class ServidorHTTP {
     }
 
     private static void enviarRanking() {
-        broadcast("RANKING:--- RANKING ---");
-
         List<Map.Entry<String, Integer>> ranking = new ArrayList<>(puntuaciones.entrySet());
         ranking.sort((a, b) -> b.getValue() - a.getValue());
 
+        StringBuilder rankingsJson = new StringBuilder("[");
         int pos = 1;
         for (Map.Entry<String, Integer> entry : ranking) {
             String nombre = jugadores.get(entry.getKey());
             if (nombre != null) {
-                broadcast("RANKING:" + pos + ". " + nombre + " - " + entry.getValue() + " pts");
+                if (pos > 1) rankingsJson.append(", ");
+                rankingsJson.append("{\"position\": ").append(pos)
+                    .append(", \"name\": \"").append(nombre)
+                    .append("\", \"points\": ").append(entry.getValue()).append("}");
                 pos++;
             }
         }
-        broadcast("RANKING:-----------------");
+        rankingsJson.append("]");
+
+        broadcastHTTP("POST", "/api/kahoot-like/ranking",
+            "{\"type\": \"ranking\", \"rankings\": " + rankingsJson + "}");
     }
 
-    // === Broadcast a todos los clientes ===
+    // === Envio/Lectura HTTP ===
 
-    private static void broadcast(String mensaje) {
+    // Enviar peticion HTTP (servidor -> cliente, para preguntas/info/ranking)
+    private static void enviarPeticionHTTP(PrintWriter out, String method, String path, String jsonBody) {
+        out.println(method + " " + path + " HTTP/1.1");
+        out.println("Content-Type: application/json");
+        out.println("");
+        out.println(jsonBody);
+    }
+
+    // Enviar respuesta HTTP (servidor -> cliente, para resultados)
+    private static void enviarRespuestaHTTP(PrintWriter out, int statusCode, String statusText, String jsonBody) {
+        out.println("HTTP/1.1 " + statusCode + " " + statusText);
+        out.println("Content-Type: application/json");
+        out.println("");
+        out.println(jsonBody);
+    }
+
+    // Broadcast HTTP POST a todos los clientes
+    private static void broadcastHTTP(String method, String path, String jsonBody) {
         for (PrintWriter writer : clientesConectados.values()) {
-            writer.println(mensaje);
+            enviarPeticionHTTP(writer, method, path, jsonBody);
         }
+    }
+
+    // Leer una peticion HTTP completa (request line + headers + body JSON)
+    private static String[] leerPeticionHTTP(BufferedReader in) throws IOException {
+        // 1. Leer request line (ej: POST /api/kahoot-like/answer HTTP/1.1)
+        String requestLine = in.readLine();
+        if (requestLine == null) return null;
+
+        // 2. Leer cabeceras hasta linea vacia
+        String linea;
+        while ((linea = in.readLine()) != null && !linea.isEmpty()) {
+            // consumir cabeceras
+        }
+        if (linea == null) return null;
+
+        // 3. Leer body JSON (lineas hasta cerrar llave)
+        StringBuilder jsonBody = new StringBuilder();
+        while ((linea = in.readLine()) != null) {
+            jsonBody.append(linea);
+            if (linea.trim().endsWith("}")) break;
+        }
+
+        return new String[]{requestLine, jsonBody.toString()};
     }
 
     // === Utilidades ===
 
     private static void inicializarPreguntas() {
-        preguntas.add(new Pregunta("Capital de Francia?", "A) Londres", "B) Paris", "C) Madrid", "D) Berlin", 'B'));
-        preguntas.add(new Pregunta("Cuanto es 2+2?", "A) 3", "B) 5", "C) 4", "D) 22", 'C'));
-        preguntas.add(new Pregunta("Lenguaje de este proyecto?", "A) Python", "B) JavaScript", "C) C++", "D) Java", 'D'));
+        preguntas.add(new Pregunta(
+            "Cual es la capital de Francia?",
+            new String[]{"Londres", "Paris", "Madrid", "Berlin"}, 1, 20));
+        preguntas.add(new Pregunta(
+            "Cuanto es 2+2?",
+            new String[]{"3", "5", "4", "22"}, 2, 20));
+        preguntas.add(new Pregunta(
+            "Lenguaje de este proyecto?",
+            new String[]{"Python", "JavaScript", "C++", "Java"}, 3, 20));
     }
 
     private static String extraerValor(String json, String clave) {
