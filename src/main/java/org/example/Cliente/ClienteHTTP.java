@@ -1,14 +1,14 @@
 package org.example.Cliente;
 
 import java.io.*;
-import java.security.KeyStore;
 import java.util.Scanner;
-import javax.net.ssl.*;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 
 public class ClienteHTTP {
 
     private static final String SERVER_IP = "localhost";
-    private static final int SERVER_PORT = 7070;
+    private static final int SERVER_PORT = 8080;
 
     public static void main(String[] args) throws Exception {
 
@@ -18,29 +18,23 @@ public class ClienteHTTP {
         System.out.println("--- TRIVIA CLIENTE ---");
         System.out.print("IP del servidor (enter = localhost): ");
         String ip = scanner.nextLine().trim();
-        if (ip.isEmpty()) ip = SERVER_IP;
+        if (ip.isEmpty())
+            ip = SERVER_IP;
 
         System.out.print("Introduce tu nombre de jugador: ");
         String miNombre = scanner.nextLine().trim();
-        if (miNombre.isEmpty()) miNombre = "Jugador";
+        if (miNombre.isEmpty())
+            miNombre = "Jugador";
 
         // 2. Configuracion SSL
-        KeyStore ts = KeyStore.getInstance("PKCS12");
-        try (InputStream tsStream = ClienteHTTP.class.getResourceAsStream("/truststore.p12")) {
-            ts.load(tsStream, "trivia123".toCharArray());
-        }
-
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init(ts);
-
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(null, tmf.getTrustManagers(), null);
-        SSLSocketFactory sslFactory = sslContext.getSocketFactory();
+        System.setProperty("javax.net.ssl.trustStore", "myserver.jks");
+        System.setProperty("javax.net.ssl.trustStorePassword", "123456");
+        SSLSocketFactory sslFactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
 
         // 3. Conexion persistente
         try (SSLSocket socket = (SSLSocket) sslFactory.createSocket(ip, SERVER_PORT);
-             PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
-             BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
+                PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
 
             // 4. Handshake HTTP con JSON de registro
             long idSesion = System.currentTimeMillis();
